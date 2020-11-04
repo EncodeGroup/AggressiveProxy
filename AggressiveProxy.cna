@@ -54,6 +54,7 @@ sub build_letmeout {
 	# println(readAll($build)); # remove
 	closef($build);
 	println("[AggressiveProxy] INFO: The binary file should be located at: " . script_resource("LetMeOutSharp/LetMeOutSharp/bin/" . $buildver . "/letmeout.exe"));
+	show_message("The binary file should be located at: " . script_resource("LetMeOutSharp/LetMeOutSharp/bin/" . $buildver . "/letmeout.exe"));
 }
 
 sub start_handler_Callback {
