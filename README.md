@@ -1,6 +1,8 @@
 # AggressiveProxy
 AggressiveProxy is a combination of a .NET 3.5 binary (**LetMeOutSharp**) and a Cobalt Strike aggressor script (**AggressiveProxy.cna**). Once LetMeOutSharp is executed on a workstation, it will try to enumerate all available proxy configurations and try to communicate with the Cobalt Strike server over HTTP(s) using the identified proxy configurations.
 
+The story behind the tool can be found at [EncodeGroup's Medium](https://medium.com/encode-threat-labs/aggressiveproxy-a-tale-of-two-proxies-and-a-sad-beacon-43042a04a0d0)
+
 ## Requirements
 * CobaltStrike 4.1
 * Mono Framework
